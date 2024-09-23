@@ -1,4 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:pdf_text/pdf_text.dart';
+import 'package:flutter_tts/flutter_tts.dart';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 void main() {
   runApp(const MyApp());
@@ -7,46 +11,20 @@ void main() {
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Demo',
+      title: 'Booked Demo',
       theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
-        useMaterial3: true,
+        primarySwatch: Colors.blue,
       ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+      home: const MyHomePage(title: 'Booked Demo'),
     );
   }
 }
 
 class MyHomePage extends StatefulWidget {
   const MyHomePage({super.key, required this.title});
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
 
   final String title;
 
@@ -55,71 +33,264 @@ class MyHomePage extends StatefulWidget {
 }
 
 class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+  String extractedText = "No text extracted yet.";
+  TextEditingController _textEditingController = TextEditingController();
+  FlutterTts flutterTts = FlutterTts();
+  stt.SpeechToText _speech = stt.SpeechToText();
+  bool isListening = false;
 
-  void _incrementCounter() {
+  @override
+  void initState() {
+    super.initState();
+    _initSpeech();
+  }
+
+  Future<void> _initSpeech() async {
+    bool available = await _speech.initialize();
+    if (available) {
+      setState(() {});
+    }
+  }
+
+  Future<void> pickAndExtractText() async {
+    try {
+      FilePickerResult? result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['pdf'],
+      );
+
+      if (result != null && result.files.single.path != null) {
+        String filePath = result.files.single.path!;
+
+        PDFDoc doc = await PDFDoc.fromPath(filePath);
+
+        String text = await doc.text;
+
+        setState(() {
+          extractedText = text;
+          _textEditingController.text = text;
+        });
+      }
+    } catch (e) {
+      setState(() {
+        extractedText = "Failed to extract text: $e";
+        _textEditingController.text = "Failed to extract text: $e";
+      });
+    }
+  }
+
+  // Speaking function that skips lines marked with { }
+  Future<void> speak() async {
+    List<String> lines = _textEditingController.text.split('\n');
+    for (String line in lines) {
+      if (!line.contains(RegExp(r'{.*}'))) { // Skip marked lines
+        await flutterTts.speak(line);
+        await Future.delayed(Duration(seconds: 1));
+      } else {
+        // Wait for user input
+        await _waitForUserInput();
+      }
+    }
+  }
+
+  // Wait for the user to speak or press a button
+  Future<void> _waitForUserInput() async {
     setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
+      isListening = true;
+    });
+    
+    // Start listening for user's input
+    await _startListening();
+
+    setState(() {
+      isListening = false;
     });
   }
 
+  Future<void> _startListening() async {
+    await _speech.listen(
+      onResult: (result) {
+        if (result.recognizedWords.isNotEmpty) {
+          // Stop listening once we detect any speech
+          _speech.stop();
+        }
+      },
+    );
+    await Future.delayed(Duration(seconds: 10)); // Timeout
+    _speech.stop();
+  }
+
+  // UI Components
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
     return Scaffold(
       appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
         title: Text(widget.title),
       ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
         child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            const Text(
-              'You have pushed the button this many times:',
+          children: [
+            Expanded(
+              child: SingleChildScrollView(
+                child: TextField(
+                  controller: _textEditingController,
+                  maxLines: null,
+                  decoration: InputDecoration(
+                    border: OutlineInputBorder(),
+                    hintText: 'No text extracted yet.',
+                  ),
+                ),
+              ),
             ),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
+            SizedBox(height: 20),
+            ElevatedButton(
+              onPressed: speak,
+              child: Text("Speak Text"),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => TeleprompterScreen(
+                      text: _textEditingController.text,
+                    ),
+                  ),
+                );
+              },
+              child: Text("Open Teleprompter"),
             ),
           ],
         ),
       ),
       floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
-      ), // This trailing comma makes auto-formatting nicer for build methods.
+        onPressed: pickAndExtractText,
+        tooltip: 'Pick PDF',
+        child: const Icon(Icons.picture_as_pdf),
+      ),
+    );
+  }
+}
+
+// Teleprompter screen with scrolling and highlighting
+class TeleprompterScreen extends StatefulWidget {
+  final String text;
+
+  TeleprompterScreen({required this.text});
+
+  @override
+  _TeleprompterScreenState createState() => _TeleprompterScreenState();
+}
+
+class _TeleprompterScreenState extends State<TeleprompterScreen> {
+  int currentLineIndex = 0;
+  ScrollController _scrollController = ScrollController();
+  List<String> lines = [];
+  FlutterTts flutterTts = FlutterTts();
+  stt.SpeechToText _speech = stt.SpeechToText();
+  bool isListening = false;
+  bool ttsSpeaking = false;
+
+  @override
+  void initState() {
+    super.initState();
+    lines = widget.text.split('\n'); // Split the input text into lines
+    _initSpeech();
+  }
+
+  Future<void> _initSpeech() async {
+    bool available = await _speech.initialize();
+    if (available) {
+      setState(() {});
+    }
+  }
+
+  // Highlight the current line and move to the next line when needed
+  void highlightNextLine() async {
+    if (currentLineIndex < lines.length) {
+      String line = lines[currentLineIndex];
+
+      if (line.contains(RegExp(r'{.*}'))) {
+        // User needs to say this line
+        await _waitForUserToSpeak(line);
+      } else {
+        // TTS speaks this line
+        await _speakLine(line);
+      }
+
+      setState(() {
+        if (currentLineIndex < lines.length - 1) {
+          currentLineIndex++;
+          _scrollController.animateTo(
+            currentLineIndex * 40.0, // Adjust based on line height
+            duration: Duration(milliseconds: 300),
+            curve: Curves.easeInOut,
+          );
+        }
+      });
+    }
+  }
+
+  // Speak the line using TTS
+  Future<void> _speakLine(String line) async {
+    ttsSpeaking = true;
+    await flutterTts.speak(line);
+    await flutterTts.awaitSpeakCompletion(true); // Wait until TTS finishes
+    ttsSpeaking = false;
+  }
+
+  // Wait for the user to speak the line
+  Future<void> _waitForUserToSpeak(String line) async {
+    String lineWithoutBraces = line.replaceAll(RegExp(r'[{}]'), ''); // Remove the curly braces
+    setState(() {
+      isListening = true;
+    });
+
+    await _speech.listen(onResult: (result) {
+      if (result.recognizedWords.toLowerCase() == lineWithoutBraces.toLowerCase()) {
+        // User spoke the correct line
+        _speech.stop();
+      }
+    });
+
+    // Timeout in case user doesn't speak within 10 seconds
+    await Future.delayed(Duration(seconds: 10));
+    _speech.stop();
+
+    setState(() {
+      isListening = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text('Teleprompter')),
+      body: Column(
+        children: [
+          Expanded(
+            child: ListView.builder(
+              controller: _scrollController,
+              itemCount: lines.length,
+              itemBuilder: (context, index) {
+                return Container(
+                  padding: EdgeInsets.all(8.0),
+                  color: index == currentLineIndex ? Colors.yellow : Colors.white,
+                  child: Text(
+                    lines[index],
+                    style: TextStyle(fontSize: 20),
+                  ),
+                );
+              },
+            ),
+          ),
+          FloatingActionButton(
+            onPressed: highlightNextLine, // Start highlighting the lines
+            child: Icon(Icons.play_arrow),
+          ),
+        ],
+      ),
     );
   }
 }
