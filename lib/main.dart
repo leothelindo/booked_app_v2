@@ -191,6 +191,9 @@ class _TeleprompterScreenState extends State<TeleprompterScreen> {
   stt.SpeechToText _speech = stt.SpeechToText();
   bool isListening = false;
   bool ttsSpeaking = false;
+  
+  // Initial font size
+  double _fontSize = 20.0;
 
   @override
   void initState() {
@@ -211,7 +214,7 @@ class _TeleprompterScreenState extends State<TeleprompterScreen> {
     if (currentLineIndex < lines.length) {
       String line = lines[currentLineIndex];
 
-      if (line.contains(RegExp(r'{.*}'))) {
+      if (line.contains(RegExp(r'\[.*\]'))) {
         // User needs to say this line
         await _waitForUserToSpeak(line);
       } else {
@@ -242,13 +245,13 @@ class _TeleprompterScreenState extends State<TeleprompterScreen> {
 
   // Wait for the user to speak the line
   Future<void> _waitForUserToSpeak(String line) async {
-    String lineWithoutBraces = line.replaceAll(RegExp(r'[{}]'), ''); // Remove the curly braces
+    String lineWithoutBrackets = line.replaceAll(RegExp(r'[\[\]]'), ''); // Remove the square brackets
     setState(() {
       isListening = true;
     });
 
     await _speech.listen(onResult: (result) {
-      if (result.recognizedWords.toLowerCase() == lineWithoutBraces.toLowerCase()) {
+      if (result.recognizedWords.toLowerCase() == lineWithoutBrackets.toLowerCase()) {
         // User spoke the correct line
         _speech.stop();
       }
@@ -263,34 +266,208 @@ class _TeleprompterScreenState extends State<TeleprompterScreen> {
     });
   }
 
+  // Increase font size
+  void _increaseFontSize() {
+    setState(() {
+      _fontSize += 2.0; // Increase by 2 points
+    });
+  }
+
+  // Decrease font size
+  void _decreaseFontSize() {
+    setState(() {
+      if (_fontSize > 10) _fontSize -= 2.0; // Decrease by 2 points but ensure it doesn't go below 10
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: Text('Teleprompter')),
-      body: Column(
+      body: Stack(
         children: [
-          Expanded(
-            child: ListView.builder(
-              controller: _scrollController,
-              itemCount: lines.length,
-              itemBuilder: (context, index) {
-                return Container(
-                  padding: EdgeInsets.all(8.0),
-                  color: index == currentLineIndex ? Colors.yellow : Colors.white,
-                  child: Text(
-                    lines[index],
-                    style: TextStyle(fontSize: 20),
+          // Teleprompter content
+          Positioned.fill(
+            child: Column(
+              children: [
+                Expanded(
+                  child: ListView.builder(
+                    controller: _scrollController,
+                    itemCount: lines.length,
+                    itemBuilder: (context, index) {
+                      return Container(
+                        padding: EdgeInsets.all(8.0),
+                        color: index == currentLineIndex ? Colors.yellow : Colors.white,
+                        child: Text(
+                          lines[index],
+                          style: TextStyle(fontSize: _fontSize),
+                        ),
+                      );
+                    },
                   ),
-                );
-              },
+                ),
+              ],
             ),
           ),
-          FloatingActionButton(
-            onPressed: highlightNextLine, // Start highlighting the lines
-            child: Icon(Icons.play_arrow),
+          
+          // Floating Action Buttons for font size control
+          Positioned(
+            right: 16,
+            bottom: 100,
+            child: Column(
+              children: [
+                // Increase font size button
+                FloatingActionButton(
+                  heroTag: 'increase_font',
+                  onPressed: _increaseFontSize,
+                  child: Icon(Icons.add),
+                ),
+                SizedBox(height: 16), // Spacing between buttons
+                // Decrease font size button
+                FloatingActionButton(
+                  heroTag: 'decrease_font',
+                  onPressed: _decreaseFontSize,
+                  child: Icon(Icons.remove),
+                ),
+              ],
+            ),
+          ),
+          
+          // Play button for highlighting and scrolling
+          Positioned(
+            right: 16,
+            bottom: 16,
+            child: FloatingActionButton(
+              heroTag: 'play',
+              onPressed: highlightNextLine, // Start highlighting the lines
+              child: Icon(Icons.play_arrow),
+            ),
           ),
         ],
       ),
     );
   }
 }
+
+
+// // Teleprompter screen with scrolling and highlighting
+// class TeleprompterScreen extends StatefulWidget {
+//   final String text;
+
+//   TeleprompterScreen({required this.text});
+
+//   @override
+//   _TeleprompterScreenState createState() => _TeleprompterScreenState();
+// }
+
+// class _TeleprompterScreenState extends State<TeleprompterScreen> {
+//   int currentLineIndex = 0;
+//   ScrollController _scrollController = ScrollController();
+//   List<String> lines = [];
+//   FlutterTts flutterTts = FlutterTts();
+//   stt.SpeechToText _speech = stt.SpeechToText();
+//   bool isListening = false;
+//   bool ttsSpeaking = false;
+
+//   @override
+//   void initState() {
+//     super.initState();
+//     lines = widget.text.split('\n'); // Split the input text into lines
+//     _initSpeech();
+//   }
+
+//   Future<void> _initSpeech() async {
+//     bool available = await _speech.initialize();
+//     if (available) {
+//       setState(() {});
+//     }
+//   }
+
+//   // Highlight the current line and move to the next line when needed
+//   void highlightNextLine() async {
+//     if (currentLineIndex < lines.length) {
+//       String line = lines[currentLineIndex];
+
+//       if (line.contains(RegExp(r'[.*]'))) {
+//         // User needs to say this line
+//         await _waitForUserToSpeak(line);
+//       } else {
+//         // TTS speaks this line
+//         await _speakLine(line);
+//       }
+
+//       setState(() {
+//         if (currentLineIndex < lines.length - 1) {
+//           currentLineIndex++;
+//           _scrollController.animateTo(
+//             currentLineIndex * 40.0, // Adjust based on line height
+//             duration: Duration(milliseconds: 300),
+//             curve: Curves.easeInOut,
+//           );
+//         }
+//       });
+//     }
+//   }
+
+//   // Speak the line using TTS
+//   Future<void> _speakLine(String line) async {
+//     ttsSpeaking = true;
+//     await flutterTts.speak(line);
+//     await flutterTts.awaitSpeakCompletion(true); // Wait until TTS finishes
+//     ttsSpeaking = false;
+//   }
+
+//   // Wait for the user to speak the line
+//   Future<void> _waitForUserToSpeak(String line) async {
+//     String lineWithoutBraces = line.replaceAll(RegExp(r'[{}]'), ''); // Remove the curly braces
+//     setState(() {
+//       isListening = true;
+//     });
+
+//     await _speech.listen(onResult: (result) {
+//       if (result.recognizedWords.toLowerCase() == lineWithoutBraces.toLowerCase()) {
+//         // User spoke the correct line
+//         _speech.stop();
+//       }
+//     });
+
+//     // Timeout in case user doesn't speak within 10 seconds
+//     await Future.delayed(Duration(seconds: 10));
+//     _speech.stop();
+
+//     setState(() {
+//       isListening = false;
+//     });
+//   }
+
+//   @override
+//   Widget build(BuildContext context) {
+//     return Scaffold(
+//       appBar: AppBar(title: Text('Teleprompter')),
+//       body: Column(
+//         children: [
+//           Expanded(
+//             child: ListView.builder(
+//               controller: _scrollController,
+//               itemCount: lines.length,
+//               itemBuilder: (context, index) {
+//                 return Container(
+//                   padding: EdgeInsets.all(8.0),
+//                   color: index == currentLineIndex ? Colors.yellow : Colors.white,
+//                   child: Text(
+//                     lines[index],
+//                     style: TextStyle(fontSize: 20),
+//                   ),
+//                 );
+//               },
+//             ),
+//           ),
+//           FloatingActionButton(
+//             onPressed: highlightNextLine, // Start highlighting the lines
+//             child: Icon(Icons.play_arrow),
+//           ),
+//         ],
+//       ),
+//     );
+//   }
+// }
