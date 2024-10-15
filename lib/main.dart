@@ -145,10 +145,6 @@ class _MyHomePageState extends State<MyHomePage> {
             ),
             SizedBox(height: 20),
             ElevatedButton(
-              onPressed: speak,
-              child: Text("Speak Text"),
-            ),
-            ElevatedButton(
               onPressed: () {
                 Navigator.push(
                   context,
@@ -183,168 +179,337 @@ class TeleprompterScreen extends StatefulWidget {
   _TeleprompterScreenState createState() => _TeleprompterScreenState();
 }
 
-class _TeleprompterScreenState extends State<TeleprompterScreen> {
+class _TeleprompterScreenState extends State<TeleprompterScreen> with SingleTickerProviderStateMixin {
   int currentLineIndex = 0;
-  ScrollController _scrollController = ScrollController();
+  late ScrollController _scrollController;
   List<String> lines = [];
   FlutterTts flutterTts = FlutterTts();
   stt.SpeechToText _speech = stt.SpeechToText();
   bool isListening = false;
   bool ttsSpeaking = false;
-  
-  // Initial font size
   double _fontSize = 20.0;
+  bool isPlaying = false;
+  bool isCompleted = false;
+  String recordedText = '';
+  late AnimationController _scrollAnimationController;
+  late Animation<double> _scrollAnimation;
 
   @override
   void initState() {
     super.initState();
-    lines = widget.text.split('\n'); // Split the input text into lines
+    _scrollController = ScrollController();
+    lines = widget.text.split('\n');
     _initSpeech();
+    _initTts();
+    _initScrollAnimation();
+  }
+
+  void _initScrollAnimation() {
+    _scrollAnimationController = AnimationController(
+      duration: const Duration(milliseconds: 500),
+      vsync: this,
+    );
+    _scrollAnimation = CurvedAnimation(
+      parent: _scrollAnimationController,
+      curve: Curves.easeInOut,
+    );
   }
 
   Future<void> _initSpeech() async {
-    bool available = await _speech.initialize();
-    if (available) {
-      setState(() {});
+    await _speech.initialize();
+  }
+
+  Future<void> _initTts() async {
+    await flutterTts.setLanguage("en-US");
+    await flutterTts.setSpeechRate(0.5);
+    flutterTts.setCompletionHandler(() {
+      if (isPlaying) {
+        _moveToNextLine();
+      }
+    });
+  }
+
+  void _togglePlayPauseRestart() {
+    if (isCompleted) {
+      _restart();
+    } else {
+      setState(() {
+        isPlaying = !isPlaying;
+      });
+      if (isPlaying) {
+        _processCurrentLine();
+      } else {
+        flutterTts.stop();
+        _speech.stop();
+      }
     }
   }
 
-  // Highlight the current line and move to the next line when needed
-  void highlightNextLine() async {
-    if (currentLineIndex < lines.length) {
-      String line = lines[currentLineIndex];
+  void _restart() {
+    setState(() {
+      currentLineIndex = 0;
+      isPlaying = true;
+      isCompleted = false;
+      recordedText = '';
+    });
+    _scrollToCurrentLine(animate: false);
+    _processCurrentLine();
+  }
 
-      if (line.contains(RegExp(r'\[.*\]'))) {
-        // User needs to say this line
-        await _waitForUserToSpeak(line);
-      } else {
-        // TTS speaks this line
-        await _speakLine(line);
-      }
-
+  void _processCurrentLine() async {
+    if (currentLineIndex >= lines.length) {
       setState(() {
-        if (currentLineIndex < lines.length - 1) {
-          currentLineIndex++;
-          _scrollController.animateTo(
-            currentLineIndex * 40.0, // Adjust based on line height
-            duration: Duration(milliseconds: 300),
-            curve: Curves.easeInOut,
-          );
+        isPlaying = false;
+        isCompleted = true;
+      });
+      return;
+    }
+
+    String line = lines[currentLineIndex];
+
+    if (line.contains(RegExp(r'\[.*\]'))) {
+      await _waitForUserToSpeak(line);
+    } else {
+      await _speakLine(line);
+    }
+  }
+
+  Future<void> _speakLine(String line) async {
+    if (!isPlaying) return;
+    await flutterTts.speak(line);
+  }
+
+  Future<void> _waitForUserToSpeak(String line) async {
+    if (!isPlaying) return;
+    String lineWithoutBrackets = line.replaceAll(RegExp(r'[\[\]]'), '');
+    setState(() {
+      isListening = true;
+      recordedText = '';
+    });
+
+    bool recognized = false;
+    await _speech.listen(
+      onResult: (result) {
+        setState(() {
+          recordedText = result.recognizedWords;
+        });
+        _updateScrollPosition(result.recognizedWords, lineWithoutBrackets);
+        if (result.finalResult) {
+          if (_isCloseEnough(result.recognizedWords, lineWithoutBrackets)) {
+            recognized = true;
+            _speech.stop();
+            _moveToNextLine();
+          }
         }
+      },
+    );
+
+    await Future.delayed(Duration(seconds: 5));
+    if (isListening && !recognized) {
+      _speech.stop();
+      setState(() {
+        isListening = false;
       });
     }
   }
 
-  // Speak the line using TTS
-  Future<void> _speakLine(String line) async {
-    ttsSpeaking = true;
-    await flutterTts.speak(line);
-    await flutterTts.awaitSpeakCompletion(true); // Wait until TTS finishes
-    ttsSpeaking = false;
+  void _updateScrollPosition(String spoken, String expected) {
+    double progress = _calculateProgress(spoken, expected);
+    double targetScroll = currentLineIndex * (_fontSize * 2) + ((_fontSize * 2) * progress);
+    _scrollController.animateTo(
+      targetScroll,
+      duration: Duration(milliseconds: 100),
+      curve: Curves.easeInOut,
+    );
   }
 
-  // Wait for the user to speak the line
-  Future<void> _waitForUserToSpeak(String line) async {
-    String lineWithoutBrackets = line.replaceAll(RegExp(r'[\[\]]'), ''); // Remove the square brackets
-    setState(() {
-      isListening = true;
-    });
+  double _calculateProgress(String spoken, String expected) {
+    List<String> spokenWords = spoken.toLowerCase().split(' ');
+    List<String> expectedWords = expected.toLowerCase().split(' ');
+    int matchingWords = spokenWords.where((word) => expectedWords.contains(word)).length;
+    return (matchingWords / expectedWords.length).clamp(0.0, 1.0);
+  }
 
-    await _speech.listen(onResult: (result) {
-      if (result.recognizedWords.toLowerCase() == lineWithoutBrackets.toLowerCase()) {
-        // User spoke the correct line
-        _speech.stop();
+  bool _isCloseEnough(String spoken, String expected) {
+    String cleanSpoken = spoken.toLowerCase().replaceAll(RegExp(r'[^\w\s]'), '');
+    String cleanExpected = expected.toLowerCase().replaceAll(RegExp(r'[^\w\s]'), '');
+
+    List<String> spokenWords = cleanSpoken.split(' ');
+    List<String> expectedWords = cleanExpected.split(' ');
+
+    int matchingWords = spokenWords.where((word) => expectedWords.contains(word)).length;
+
+    return matchingWords >= (expectedWords.length * 0.7);
+  }
+
+  void _moveToNextLine() {
+    if (!isPlaying) return;
+    setState(() {
+      if (currentLineIndex < lines.length - 1) {
+        currentLineIndex++;
+        _scrollToCurrentLine();
+      } else {
+        isPlaying = false;
+        isCompleted = true;
       }
     });
-
-    // Timeout in case user doesn't speak within 10 seconds
-    await Future.delayed(Duration(seconds: 10));
-    _speech.stop();
-
-    setState(() {
-      isListening = false;
-    });
+    if (isPlaying) {
+      _processCurrentLine();
+    }
   }
 
-  // Increase font size
-  void _increaseFontSize() {
-    setState(() {
-      _fontSize += 2.0; // Increase by 2 points
-    });
+  void _scrollToCurrentLine({bool animate = true}) {
+    double targetScroll = currentLineIndex * (_fontSize * 2);
+    if (animate) {
+      _scrollAnimationController.reset();
+      _scrollAnimation = Tween<double>(
+        begin: _scrollController.offset,
+        end: targetScroll,
+      ).animate(_scrollAnimationController);
+      _scrollAnimationController.forward();
+      _scrollAnimation.addListener(() {
+        _scrollController.jumpTo(_scrollAnimation.value);
+      });
+    } else {
+      _scrollController.jumpTo(targetScroll);
+    }
   }
 
-  // Decrease font size
-  void _decreaseFontSize() {
+  void _changeFontSize(double delta) {
     setState(() {
-      if (_fontSize > 10) _fontSize -= 2.0; // Decrease by 2 points but ensure it doesn't go below 10
+      _fontSize = (_fontSize + delta).clamp(10.0, 40.0);
+      _scrollToCurrentLine();
     });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text('Teleprompter')),
+      appBar: AppBar(title: Text('Teleprompter Demo')),
       body: Stack(
         children: [
-          // Teleprompter content
           Positioned.fill(
-            child: Column(
-              children: [
-                Expanded(
-                  child: ListView.builder(
-                    controller: _scrollController,
-                    itemCount: lines.length,
-                    itemBuilder: (context, index) {
-                      return Container(
-                        padding: EdgeInsets.all(8.0),
-                        color: index == currentLineIndex ? Colors.yellow : Colors.white,
-                        child: Text(
-                          lines[index],
-                          style: TextStyle(fontSize: _fontSize),
-                        ),
-                      );
-                    },
-                  ),
+            child: ClipRect(
+              child: CustomPaint(
+                painter: FadeOutPainter(),
+                child: ListView.builder(
+                  controller: _scrollController,
+                  itemCount: lines.length,
+                  itemBuilder: (context, index) {
+                    return Container(
+                      padding: EdgeInsets.all(8.0),
+                      color: index == currentLineIndex ? Colors.yellow.withOpacity(0.3) : Colors.transparent,
+                      child: Text(
+                        lines[index],
+                        style: TextStyle(fontSize: _fontSize),
+                      ),
+                    );
+                  },
                 ),
-              ],
+              ),
             ),
           ),
-          
-          // Floating Action Buttons for font size control
           Positioned(
             right: 16,
             bottom: 100,
             child: Column(
               children: [
-                // Increase font size button
                 FloatingActionButton(
                   heroTag: 'increase_font',
-                  onPressed: _increaseFontSize,
+                  onPressed: () => _changeFontSize(2.0),
                   child: Icon(Icons.add),
                 ),
-                SizedBox(height: 16), // Spacing between buttons
-                // Decrease font size button
+                SizedBox(height: 16),
                 FloatingActionButton(
                   heroTag: 'decrease_font',
-                  onPressed: _decreaseFontSize,
+                  onPressed: () => _changeFontSize(-2.0),
                   child: Icon(Icons.remove),
                 ),
               ],
             ),
           ),
-          
-          // Play button for highlighting and scrolling
           Positioned(
             right: 16,
             bottom: 16,
             child: FloatingActionButton(
-              heroTag: 'play',
-              onPressed: highlightNextLine, // Start highlighting the lines
-              child: Icon(Icons.play_arrow),
+              heroTag: 'play_pause_restart',
+              onPressed: _togglePlayPauseRestart,
+              child: Icon(isCompleted ? Icons.replay : (isPlaying ? Icons.pause : Icons.play_arrow)),
+            ),
+          ),
+          if (isListening)
+            Positioned(
+              left: 128,
+              bottom: 16,
+              child: Container(
+                width: MediaQuery.of(context).size.width * 0.7,
+                padding: EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.green.withOpacity(0.7),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Listening...',
+                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      recordedText,
+                      style: TextStyle(color: Colors.white),
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          Positioned(
+            left: 16,
+            bottom: 16,
+            child: FloatingActionButton(
+              heroTag: 'next_line',
+              onPressed: () {
+                if (isListening) {
+                  _speech.stop();
+                }
+                _moveToNextLine();
+              },
+              child: Icon(Icons.skip_next),
             ),
           ),
         ],
       ),
     );
   }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    _scrollAnimationController.dispose();
+    flutterTts.stop();
+    _speech.stop();
+    super.dispose();
+  }
+}
+
+class FadeOutPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final Rect rect = Rect.fromLTWH(0, 0, size.width, size.height);
+    final Gradient gradient = LinearGradient(
+      begin: Alignment.topCenter,
+      end: Alignment.bottomCenter,
+      colors: [Colors.white, Colors.white.withOpacity(0.0)],
+      stops: [0.0, 0.1],
+    );
+    final Paint paint = Paint()..shader = gradient.createShader(rect);
+    canvas.drawRect(rect, paint);
+  }
+
+  @override
+  bool shouldRepaint(CustomPainter oldDelegate) => false;
 }
